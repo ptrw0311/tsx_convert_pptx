@@ -1,0 +1,27 @@
+{
+  "name": "tsx-to-pptx-converter",
+  "version": "1.0.0",
+  "description": "通用 TSX 投影片轉換為 PPTX 格式的工具",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "convert": "ts-node src/index.ts"
+  },
+  "keywords": ["pptx", "tsx", "converter", "presentation"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "pptxgenjs": "^3.12.0",
+    "@babel/parser": "^7.23.0",
+    "@babel/traverse": "^7.23.0",
+    "@babel/types": "^7.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/babel__traverse": "^7.20.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0"
+  }
+}

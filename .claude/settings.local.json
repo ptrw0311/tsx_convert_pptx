@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/fenc07837/Downloads/**)",
+      "Bash(npm run build:*)",
+      "Bash(npm run convert:*)",
+      "Bash(node:*)",
+      "Bash(npm run build:v3:*)",
+      "Bash(npm run convert:ai:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
