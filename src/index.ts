@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseTsxFile, parseSlideDataSimple, extractMetadata } from './tsxParser';
-import { generatePptx } from './pptxGenerator_v3';
+import { generatePptx } from './pptxGenerator_precise';
 
 /**
  * 主程序
@@ -78,7 +78,7 @@ async function main() {
 
     // 提取元數據
     const code = fs.readFileSync(inputFile, 'utf-8');
-    presentation.metadata = extractMetadata(code);
+    presentation.metadata = extractMetadata(code, inputFile);
 
     // 生成 PPTX - 傳入 TSX 文件路徑以便直接解析 JSX
     console.log('\n⏳ 正在生成 PowerPoint 文件...');

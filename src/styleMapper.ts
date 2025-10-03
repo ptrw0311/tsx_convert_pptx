@@ -79,17 +79,14 @@ export function parseTailwindClasses(classNames: string): Partial<ElementStyle> 
   const style: Partial<ElementStyle> = {};
 
   classes.forEach(className => {
-    // 背景顏色（包括漸變）
     if (className.startsWith('bg-')) {
       if (className.includes('gradient')) {
-        // 對於漸變，取終點顏色
-        const toMatch = classNames.match(/to-(\w+-\d+)/);
-        if (toMatch) {
-          const colorKey = toMatch[1];
-          if (colorMap[colorKey]) {
-            style.backgroundColor = colorMap[colorKey];
-          }
-        }
+        style.gradient = style.gradient ?? { angle: 315 };
+        if (className.includes('to-r')) style.gradient.angle = 0;
+        if (className.includes('to-b')) style.gradient.angle = 90;
+        if (className.includes('to-tr')) style.gradient.angle = 45;
+        if (className.includes('to-br')) style.gradient.angle = 315;
+        if (className.includes('to-bl')) style.gradient.angle = 225;
       } else {
         const colorKey = className.replace('bg-', '');
         if (colorMap[colorKey]) {
@@ -98,9 +95,23 @@ export function parseTailwindClasses(classNames: string): Partial<ElementStyle> 
       }
     }
 
-    // 文字顏色
+    if (className.startsWith('from-')) {
+      const colorKey = className.replace('from-', '');
+      if (colorMap[colorKey]) {
+        style.gradient = style.gradient ?? {};
+        style.gradient.from = colorMap[colorKey];
+      }
+    }
+
+    if (className.startsWith('to-')) {
+      const colorKey = className.replace('to-', '');
+      if (colorMap[colorKey]) {
+        style.gradient = style.gradient ?? {};
+        style.gradient.to = colorMap[colorKey];
+      }
+    }
+
     if (className.startsWith('text-')) {
-      // 檢查是否為顏色
       const parts = className.split('-');
       if (parts.length >= 3) {
         const colorKey = parts.slice(1).join('-');
@@ -109,7 +120,6 @@ export function parseTailwindClasses(classNames: string): Partial<ElementStyle> 
         }
       }
 
-      // 檢查字體大小
       if (className === 'text-xs') style.fontSize = 10;
       else if (className === 'text-sm') style.fontSize = 11;
       else if (className === 'text-base') style.fontSize = 13;
@@ -119,58 +129,106 @@ export function parseTailwindClasses(classNames: string): Partial<ElementStyle> 
       else if (className === 'text-3xl') style.fontSize = 28;
     }
 
-    // 字體粗細
-    if (className.includes('font-bold')) {
-      style.fontWeight = 'bold';
-    } else if (className.includes('font-semibold')) {
+    if (className.includes('font-bold') || className.includes('font-semibold')) {
       style.fontWeight = 'bold';
     }
 
-    // 邊框
     if (className.startsWith('border-')) {
       const parts = className.split('-');
-
-      // 邊框顏色
       if (parts.length >= 3 && colorMap[parts.slice(1).join('-')]) {
         style.borderColor = colorMap[parts.slice(1).join('-')];
       }
 
-      // 邊框寬度
-      if (className.includes('border-2')) {
-        style.borderWidth = 2;
-      } else if (className.includes('border-4')) {
-        style.borderWidth = 4;
-      } else if (className.includes('border-l-')) {
-        // 左邊框
-        const width = className.match(/border-l-(\d+)/);
-        if (width) {
-          style.borderWidth = parseInt(width[1]);
-        }
-      }
+      if (className.includes('border-2')) style.borderWidth = 2;
+      else if (className.includes('border-4')) style.borderWidth = 4;
+      else if (className.includes('border')) style.borderWidth = 1;
     }
 
-    // 圓角
     if (className.includes('rounded')) {
-      if (className.includes('rounded-lg')) {
-        style.borderRadius = 8;
-      } else if (className.includes('rounded-xl')) {
-        style.borderRadius = 12;
-      } else {
-        style.borderRadius = 4;
-      }
+      if (className.includes('rounded-xl')) style.borderRadius = 12;
+      else if (className.includes('rounded-lg')) style.borderRadius = 8;
+      else if (className.includes('rounded-full')) style.borderRadius = 999;
+      else style.borderRadius = 4;
     }
 
-    // 對齊方式
-    if (className.includes('text-center')) {
-      style.textAlign = 'center';
-    } else if (className.includes('text-right')) {
-      style.textAlign = 'right';
-    } else if (className.includes('text-left')) {
-      style.textAlign = 'left';
+    if (className.includes('text-center')) style.textAlign = 'center';
+    else if (className.includes('text-right')) style.textAlign = 'right';
+    else if (className.includes('text-left')) style.textAlign = 'left';
+
+    if (className.includes('shadow')) style.shadow = true;
+
+    if (className === 'flex') style.flexDirection = 'row';
+    if (className === 'flex-col') style.flexDirection = 'column';
+
+    if (className.startsWith('gap-')) {
+      const value = parseInt(className.replace('gap-', ''), 10);
+      if (!Number.isNaN(value)) style.gap = tailwindUnitToInches(value);
     }
+
+    if (className.startsWith('space-y-')) {
+      const value = parseInt(className.replace('space-y-', ''), 10);
+      if (!Number.isNaN(value)) style.gap = tailwindUnitToInches(value);
+    }
+
+    if (className === 'items-center') style.alignItems = 'center';
+    else if (className === 'items-end') style.alignItems = 'end';
+
+    if (className === 'justify-center') style.justifyContent = 'center';
+    else if (className === 'justify-between') style.justifyContent = 'between';
+
+    if (className.startsWith('mb-')) {
+      const value = parseInt(className.replace('mb-', ''), 10);
+      if (!Number.isNaN(value)) style.marginBottom = tailwindUnitToInches(value);
+    }
+
+    if (className.startsWith('mt-')) {
+      const value = parseInt(className.replace('mt-', ''), 10);
+      if (!Number.isNaN(value)) style.marginTop = tailwindUnitToInches(value);
+    }
+
+    if (className.startsWith('p-')) {
+      const value = parseInt(className.replace('p-', ''), 10);
+      if (!Number.isNaN(value)) style.padding = tailwindUnitToInches(value);
+    }
+
+    if (className.startsWith('px-')) {
+      const value = parseInt(className.replace('px-', ''), 10);
+      if (!Number.isNaN(value)) style.paddingX = tailwindUnitToInches(value);
+    }
+
+    if (className.startsWith('py-')) {
+      const value = parseInt(className.replace('py-', ''), 10);
+      if (!Number.isNaN(value)) style.paddingY = tailwindUnitToInches(value);
+    }
+
+    if (className.startsWith('w-')) {
+      const value = parseInt(className.replace('w-', ''), 10);
+      if (!Number.isNaN(value)) style.width = tailwindUnitToInches(value);
+    }
+
+    if (className.startsWith('h-')) {
+      const value = parseInt(className.replace('h-', ''), 10);
+      if (!Number.isNaN(value)) style.height = tailwindUnitToInches(value);
+    }
+
+    if (className === 'text-xs') style.lineHeight = 0.18;
+    else if (className === 'text-sm') style.lineHeight = 0.2;
+    else if (className === 'text-base') style.lineHeight = 0.22;
+    else if (className === 'text-lg') style.lineHeight = 0.25;
+    else if (className === 'text-xl') style.lineHeight = 0.3;
+    else if (className === 'text-2xl') style.lineHeight = 0.35;
+    else if (className === 'text-3xl') style.lineHeight = 0.4;
   });
 
+  if (style.gradient && !style.backgroundColor) {
+    style.backgroundColor = style.gradient.to || style.gradient.from;
+  }
+
   return style;
+}
+
+function tailwindUnitToInches(value: number): number {
+  return parseFloat((value * 0.0416).toFixed(3));
 }
 
 /**

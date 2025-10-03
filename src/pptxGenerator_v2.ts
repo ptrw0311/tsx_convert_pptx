@@ -4,12 +4,13 @@
  */
 
 import PptxGenJS from 'pptxgenjs';
-import { ParsedPresentation } from './types';
+import { ParsedPresentation, PresentationMetadata } from './types';
 import { parseTailwindClasses } from './styleMapper';
 import * as fs from 'fs';
 import * as parser from '@babel/parser';
 import traverse from '@babel/traverse';
 import * as t from '@babel/types';
+import { extractMetadata } from './tsxParser';
 
 interface LayoutBox {
   x: number;
@@ -32,7 +33,7 @@ export async function generatePptx(
   // 直接從 TSX 文件解析並渲染
   const code = fs.readFileSync(tsxFilePath, 'utf-8');
   const slidesData = extractSlidesFromTsx(code);
-  const metadata = extractMetadataFromTsx(code);
+  const metadata = extractMetadataFromTsx(code, tsxFilePath, presentation.metadata);
 
   slidesData.forEach((slideData) => {
     createSlideFromJsx(pptx, slideData, metadata);
@@ -44,26 +45,25 @@ export async function generatePptx(
 /**
  * 從 TSX 代碼中提取元數據
  */
-function extractMetadataFromTsx(code: string): any {
-  const metadata: any = {};
+function extractMetadataFromTsx(
+  code: string,
+  sourceFilePath?: string,
+  parsedMetadata?: PresentationMetadata
+): PresentationMetadata {
+  const metadataFromCode = extractMetadata(code, sourceFilePath);
 
-  // 提取公司名稱
-  if (code.includes('富鴻網 FDS')) {
-    metadata.company = '富鴻網 FDS';
+  if (!parsedMetadata) {
+    return metadataFromCode;
   }
 
-  // 提取報告類型
-  if (code.includes('AI機房市場研究報告')) {
-    metadata.title = 'AI機房市場研究報告';
-    metadata.subtitle = '臺灣市場分析';
-    metadata.year = '2025年度';
-  } else if (code.includes('整合專案事業部業務現況報告')) {
-    metadata.title = '整合專案事業部業務現況報告';
-    metadata.subtitle = '內部檢討會議';
-    metadata.year = '2025年度營運檢視';
-  }
+  const merged: PresentationMetadata = { ...metadataFromCode };
+  (Object.keys(parsedMetadata) as (keyof PresentationMetadata)[]).forEach((key) => {
+    if (!merged[key] && parsedMetadata[key]) {
+      merged[key] = parsedMetadata[key];
+    }
+  });
 
-  return metadata;
+  return merged;
 }
 
 /**

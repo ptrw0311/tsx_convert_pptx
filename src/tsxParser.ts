@@ -7,8 +7,52 @@ import * as fs from 'fs';
 import * as parser from '@babel/parser';
 import traverse from '@babel/traverse';
 import * as t from '@babel/types';
-import { SlideData, ContentElement, ParsedPresentation } from './types';
+import { SlideData, ContentElement, ParsedPresentation, PresentationMetadata } from './types';
 import { parseTailwindClasses, extractLayoutInfo, stripHtmlTags } from './styleMapper';
+
+const METADATA_KEY_MAP: Record<string, keyof PresentationMetadata> = {
+  company: 'company',
+  organisation: 'company',
+  organization: 'company',
+  org: 'company',
+  corporation: 'company',
+  corporate: 'company',
+  brand: 'company',
+  business: 'company',
+  department: 'department',
+  dept: 'department',
+  division: 'department',
+  team: 'department',
+  unit: 'department',
+  title: 'title',
+  reporttitle: 'title',
+  name: 'title',
+  headline: 'title',
+  subtitle: 'subtitle',
+  tagline: 'subtitle',
+  description: 'subtitle',
+  summary: 'subtitle',
+  highlight: 'subtitle',
+  year: 'year',
+  fiscalyear: 'year',
+  date: 'date',
+  reportdate: 'date',
+  asof: 'date',
+  presenter: 'presenter',
+  author: 'presenter',
+  speaker: 'presenter',
+  preparedby: 'presenter'
+};
+
+const METADATA_KEY_WEIGHT: Record<keyof PresentationMetadata, number> = {
+  company: 3,
+  department: 2,
+  title: 2,
+  subtitle: 1.5,
+  date: 2,
+  year: 1.5,
+  presenter: 1
+};
 
 /**
  * 解析 TSX 文件
@@ -269,20 +313,179 @@ function parseSlideFromCode(code: string): SlideData | null {
 /**
  * 提取元數據（公司名稱、日期等）
  */
-export function extractMetadata(code: string): any {
-  const metadata: any = {};
-
-  // 提取公司名稱
-  const companyMatch = code.match(/富鴻網 FDS/);
-  if (companyMatch) {
-    metadata.company = '富鴻網 FDS';
+export function extractMetadata(code: string, sourceFilePath?: string): PresentationMetadata {
+  let ast: t.File | null = null;
+  try {
+    ast = parser.parse(code, {
+      sourceType: 'module',
+      plugins: ['jsx', 'typescript']
+    });
+  } catch (error) {
+    // 如果語法解析失敗，改用簡易匹配
+    return buildFallbackMetadata(code, sourceFilePath);
   }
 
-  // 提取標題
-  const titleMatch = code.match(/整合專案事業部業務現況報告/);
-  if (titleMatch) {
-    metadata.title = '整合專案事業部業務現況報告';
+  const candidates: Array<{ metadata: PresentationMetadata; score: number }> = [];
+
+  traverse(ast, {
+    VariableDeclarator(path) {
+      const init = path.node.init;
+      if (t.isObjectExpression(init)) {
+        const candidate = buildMetadataFromObject(init);
+        if (candidate.score > 0) {
+          candidates.push(candidate);
+        }
+      }
+    },
+    ObjectExpression(path) {
+      // 尋找 export default { metadata: { ... } } 型態
+      const parent = path.parent;
+      if (t.isObjectProperty(parent) && t.isIdentifier(parent.key) && parent.key.name === 'metadata') {
+        const candidate = buildMetadataFromObject(path.node);
+        if (candidate.score > 0) {
+          candidates.push(candidate);
+        }
+      }
+    }
+  });
+
+  const best = selectBestMetadataCandidate(candidates);
+  const metadata: PresentationMetadata = best ? { ...best.metadata } : {};
+
+  // 從 slides 內容補齊標題/副標題
+  const slideObjects = extractSlideObjects(code)
+    .map(parseSlideFromCode)
+    .filter((slide): slide is SlideData => Boolean(slide));
+
+  if (!metadata.title && slideObjects[0]?.title) {
+    metadata.title = slideObjects[0].title;
+  }
+
+  if (!metadata.subtitle && slideObjects[0]?.subtitle) {
+    metadata.subtitle = slideObjects[0].subtitle;
+  }
+
+  if (!metadata.company) {
+    metadata.company = fallbackCompanyFromCode(code) || deriveNameFromPath(sourceFilePath);
+  }
+
+  if (!metadata.year) {
+    metadata.year = fallbackYearFromCode(code);
+  }
+
+  if (!metadata.date) {
+    metadata.date = fallbackDateFromCode(code);
   }
 
   return metadata;
+}
+
+function buildFallbackMetadata(code: string, sourceFilePath?: string): PresentationMetadata {
+  const slides = extractSlideObjects(code)
+    .map(parseSlideFromCode)
+    .filter((slide): slide is SlideData => Boolean(slide));
+
+  return {
+    title: slides[0]?.title,
+    subtitle: slides[0]?.subtitle,
+    company: fallbackCompanyFromCode(code) || deriveNameFromPath(sourceFilePath),
+    year: fallbackYearFromCode(code),
+    date: fallbackDateFromCode(code)
+  };
+}
+
+function buildMetadataFromObject(objectExpr: t.ObjectExpression): { metadata: PresentationMetadata; score: number } {
+  const metadata: PresentationMetadata = {};
+  let score = 0;
+
+  objectExpr.properties.forEach((prop) => {
+    if (t.isObjectProperty(prop)) {
+      const keyName = getPropertyKeyName(prop.key);
+      if (!keyName) return;
+
+      const canonicalKey = METADATA_KEY_MAP[keyName.toLowerCase()];
+      if (!canonicalKey) {
+        return;
+      }
+
+      const value = extractStringValue(prop.value);
+      if (value) {
+        (metadata as any)[canonicalKey] = value.trim();
+        score += METADATA_KEY_WEIGHT[canonicalKey] ?? 1;
+      }
+    }
+  });
+
+  return { metadata, score };
+}
+
+function selectBestMetadataCandidate(
+  candidates: Array<{ metadata: PresentationMetadata; score: number }>
+): { metadata: PresentationMetadata; score: number } | null {
+  if (candidates.length === 0) return null;
+
+  return candidates
+    .filter(candidate => Object.keys(candidate.metadata).length > 0)
+    .sort((a, b) => b.score - a.score)[0] ?? null;
+}
+
+function getPropertyKeyName(key: t.Node): string | null {
+  if (t.isIdentifier(key)) return key.name;
+  if (t.isStringLiteral(key)) return key.value;
+  return null;
+}
+
+function extractStringValue(node: t.Node | null | undefined): string | null {
+  if (!node) return null;
+
+  if (t.isStringLiteral(node)) {
+    return node.value;
+  }
+
+  if (t.isTemplateLiteral(node) && node.expressions.length === 0) {
+    return node.quasis.map(quasi => quasi.value.cooked ?? '').join('');
+  }
+
+  if (t.isTSAsExpression(node) || t.isTypeCastExpression(node)) {
+    return extractStringValue(node.expression as t.Expression);
+  }
+
+  return null;
+}
+
+function deriveNameFromPath(filePath?: string): string | undefined {
+  if (!filePath) return undefined;
+  const baseName = filePath.split(/[\\/]/).pop();
+  if (!baseName) return undefined;
+  const noExt = baseName.replace(/\.[^/.]+$/, '');
+  if (!noExt) return undefined;
+  return noExt
+    .replace(/[-_]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^(.)/g, (char) => char.toUpperCase());
+}
+
+function fallbackCompanyFromCode(code: string): string | undefined {
+  const companyRegex = /['"` ]([^'"`\n]*?(?:公司|股份有限公司|企業|集團|Corporation|Corp\.?|Company|Inc\.?|Limited|Ltd\.?)[^'"`\n]*)['"`]/;
+  const match = code.match(companyRegex);
+  return match ? match[1].trim() : undefined;
+}
+
+function fallbackYearFromCode(code: string): string | undefined {
+  const yearMatches = code.match(/20\d{2}(?=\D)/g);
+  if (!yearMatches) return undefined;
+  const numericCounts: Record<string, number> = {};
+  yearMatches.forEach((year) => {
+    numericCounts[year] = (numericCounts[year] || 0) + 1;
+  });
+  const sorted = Object.entries(numericCounts).sort((a, b) => b[1] - a[1]);
+  return sorted[0]?.[0];
+}
+
+function fallbackDateFromCode(code: string): string | undefined {
+  const dateRegex = /(20\d{2}[\/-](?:0?[1-9]|1[0-2])(?:[\/-](?:0?[1-9]|[12]\d|3[01]))?)/;
+  const match = code.match(dateRegex);
+  return match ? match[1] : undefined;
 }

@@ -4,18 +4,24 @@
  */
 
 import PptxGenJS from 'pptxgenjs';
-import { ParsedPresentation } from './types';
+import { ParsedPresentation, PresentationMetadata } from './types';
 import { parseTailwindClasses } from './styleMapper';
 import * as fs from 'fs';
+import * as path from 'path';
 import * as parser from '@babel/parser';
 import traverse from '@babel/traverse';
 import * as t from '@babel/types';
+import { extractMetadata } from './tsxParser';
 
 interface LayoutBox {
   x: number;
   y: number;
   w: number;
   h: number;
+}
+
+interface RenderResult {
+  usedHeight: number;
 }
 
 export async function generatePptx(
@@ -28,7 +34,7 @@ export async function generatePptx(
 
   const code = fs.readFileSync(tsxFilePath, 'utf-8');
   const slidesData = extractSlidesFromTsx(code);
-  const metadata = extractMetadataFromTsx(code);
+  const metadata = prepareMetadata(code, slidesData, tsxFilePath, presentation.metadata);
 
   slidesData.forEach((slideData) => {
     createSlideFromJsx(pptx, slideData, metadata);
@@ -37,13 +43,51 @@ export async function generatePptx(
   await pptx.writeFile({ fileName: outputPath });
 }
 
-function extractMetadataFromTsx(code: string): any {
-  return {
-    company: '富鴻網 FDS',
-    title: 'AI機房市場研究報告',
-    subtitle: '臺灣市場分析',
-    year: '2025年度'
-  };
+function prepareMetadata(
+  code: string,
+  slidesData: any[],
+  tsxFilePath: string,
+  parsedMetadata?: PresentationMetadata
+): PresentationMetadata {
+  const metadataFromCode = extractMetadata(code, tsxFilePath);
+  const merged: PresentationMetadata = { ...metadataFromCode };
+
+  if (parsedMetadata) {
+    (Object.keys(parsedMetadata) as (keyof PresentationMetadata)[]).forEach((key) => {
+      if (!merged[key] && parsedMetadata[key]) {
+        merged[key] = parsedMetadata[key];
+      }
+    });
+  }
+
+  const firstSlide = slidesData[0];
+  if (firstSlide) {
+    if (!merged.title && firstSlide.title) {
+      merged.title = firstSlide.title;
+    }
+    if (!merged.subtitle && firstSlide.subtitle) {
+      merged.subtitle = firstSlide.subtitle;
+    }
+  }
+
+  if (!merged.company) {
+    merged.company = deriveNameFromFile(tsxFilePath);
+  }
+
+  return merged;
+}
+
+function deriveNameFromFile(filePath: string): string | undefined {
+  if (!filePath) return undefined;
+  const baseName = path.basename(filePath, path.extname(filePath));
+  if (!baseName) return undefined;
+
+  return baseName
+    .replace(/[-_]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^(.)/g, (char) => char.toUpperCase());
 }
 
 function extractSlidesFromTsx(code: string): any[] {
@@ -108,52 +152,55 @@ function extractSlideData(objectExpr: t.ObjectExpression): any {
   return slideData;
 }
 
-function createSlideFromJsx(pptx: PptxGenJS, slideData: any, metadata?: any): void {
+function createSlideFromJsx(pptx: PptxGenJS, slideData: any, metadata?: PresentationMetadata): void {
   const slide = pptx.addSlide();
   slide.background = { color: 'FFFFFF' };
 
-  addHeader(slide, metadata);
+  const headerInfo = addHeader(slide, metadata, slideData);
 
-  const titleY = 0.85;
-  slide.addText(slideData.title || '', {
-    x: 0.5,
-    y: titleY,
-    w: 9,
-    h: 0.35,
-    fontSize: 20,
-    bold: true,
-    color: '1F2937',
-  });
+  let currentY = headerInfo.nextY;
+
+  if (slideData.title) {
+    slide.addText(slideData.title, {
+      x: 0.5,
+      y: currentY,
+      w: 9,
+      h: 0.4,
+      fontSize: 20,
+      bold: true,
+      color: '1F2937',
+    });
+    currentY += 0.42;
+  }
 
   if (slideData.subtitle) {
     slide.addText(slideData.subtitle, {
       x: 0.5,
-      y: titleY + 0.38,
+      y: currentY,
       w: 9,
-      h: 0.2,
+      h: 0.25,
       fontSize: 12,
       color: '4B5563',
     });
+    currentY += 0.28;
   }
 
   slide.addShape(pptx.ShapeType.rect, {
     x: 0.5,
-    y: titleY + 0.6,
+    y: currentY,
     w: 9,
     h: 0.03,
     fill: { color: '2563EB' },
     line: { type: 'none' }
   });
+  currentY += 0.12;
 
   if (slideData.jsxContent) {
-    const contentStartY = titleY + 0.7;
-    const availableHeight = 5.625 - contentStartY - 0.2;
-
     const contentBox: LayoutBox = {
       x: 0.5,
-      y: contentStartY,
+      y: currentY,
       w: 9,
-      h: availableHeight
+      h: Math.max(0.5, 5.625 - currentY - 0.2)
     };
 
     renderJsx(slide, slideData.jsxContent, contentBox, pptx);
@@ -449,46 +496,93 @@ function extractText(jsx: any): string {
   return '';
 }
 
-function addHeader(slide: any, metadata: any): void {
-  slide.addText(metadata?.company || '富鴻網 FDS', {
-    x: 0.5,
-    y: 0.25,
-    w: 5,
-    h: 0.25,
-    fontSize: 14,
-    bold: true,
-    color: '2563EB',
-  });
-
-  if (metadata?.title) {
-    slide.addText(metadata.title, {
-      x: 0.5,
-      y: 0.48,
-      w: 5,
-      h: 0.15,
-      fontSize: 9,
-      color: '4B5563',
-    });
+function addHeader(
+  slide: any,
+  metadata: PresentationMetadata | undefined,
+  slideData: any
+): { hasHeader: boolean; nextY: number } {
+  const defaultNextY = 0.6;
+  if (!metadata) {
+    return { hasHeader: false, nextY: defaultNextY };
   }
 
-  if (metadata?.subtitle && metadata?.year) {
-    slide.addText(`${metadata.subtitle}\n${metadata.year}`, {
-      x: 7.5,
+  let leftCursorY = 0.25;
+  let lastLeftBaseline = leftCursorY;
+  let hasHeaderContent = false;
+
+  if (metadata.company) {
+    slide.addText(metadata.company, {
+      x: 0.5,
+      y: leftCursorY,
+      w: 5,
+      h: 0.25,
+      fontSize: 14,
+      bold: true,
+      color: '2563EB',
+    });
+    hasHeaderContent = true;
+    lastLeftBaseline = leftCursorY + 0.28;
+    leftCursorY = lastLeftBaseline;
+  }
+
+  const reportTitle = metadata.title && metadata.title !== slideData?.title ? metadata.title : undefined;
+  if (reportTitle) {
+    slide.addText(reportTitle, {
+      x: 0.5,
+      y: leftCursorY,
+      w: 5,
+      h: 0.2,
+      fontSize: 10,
+      color: '4B5563',
+    });
+    hasHeaderContent = true;
+    lastLeftBaseline = leftCursorY + 0.22;
+    leftCursorY = lastLeftBaseline;
+  }
+
+  const rightLines: string[] = [];
+  if (metadata.subtitle && metadata.subtitle !== slideData?.subtitle) {
+    rightLines.push(metadata.subtitle);
+  }
+  if (metadata.department) {
+    rightLines.push(metadata.department);
+  }
+  if (metadata.presenter) {
+    rightLines.push(metadata.presenter);
+  }
+  if (metadata.year) {
+    rightLines.push(metadata.year);
+  }
+  if (metadata.date) {
+    rightLines.push(metadata.date);
+  }
+
+  if (rightLines.length > 0) {
+    slide.addText(rightLines.join('\n'), {
+      x: 7.3,
       y: 0.25,
-      w: 2,
-      h: 0.35,
+      w: 2.2,
+      h: 0.4,
       fontSize: 9,
       color: '4B5563',
       align: 'right',
     });
+    hasHeaderContent = true;
   }
 
+  if (!hasHeaderContent) {
+    return { hasHeader: false, nextY: defaultNextY };
+  }
+
+  const lineY = Math.max(lastLeftBaseline + 0.08, 0.68);
   slide.addShape(slide.ShapeType?.rect || 'rect', {
     x: 0.5,
-    y: 0.7,
+    y: lineY,
     w: 9,
     h: 0.015,
     fill: { color: 'E5E7EB' },
     line: { type: 'none' }
   });
+
+  return { hasHeader: true, nextY: lineY + 0.15 };
 }
